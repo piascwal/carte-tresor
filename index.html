@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Créateur de carte au trésor</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🗺️</text></svg>" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Pirata+One&family=Baloo+2:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-icon" aria-hidden="true">🗺️</span>
+      <input id="titleInput" class="title-input" value="Ma carte au trésor" maxlength="40" aria-label="Titre de la carte" />
+    </div>
+    <div class="topbar-actions">
+      <button id="btnUndo" class="icon-btn" title="Annuler" aria-label="Annuler">↩️</button>
+      <button id="btnRedo" class="icon-btn" title="Rétablir" aria-label="Rétablir">↪️</button>
+      <button id="btnClear" class="icon-btn" title="Tout effacer" aria-label="Tout effacer">🗑️</button>
+      <button id="btnPng" class="text-btn" title="Télécharger en image">🖼️ Image</button>
+      <button id="btnPdf" class="text-btn primary" title="Exporter en PDF">📄 Exporter en PDF</button>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <aside class="palette" id="palette">
+      <div class="palette-inner">
+        <div class="paper-picker">
+          <span class="section-label">Fond de carte</span>
+          <div class="paper-thumbs" id="paperThumbs"></div>
+        </div>
+
+        <div class="text-tool-row" id="textToolRow"></div>
+
+        <div class="tabs" id="categoryTabs" role="tablist"></div>
+        <div class="items-grid" id="itemsGrid" role="tabpanel"></div>
+      </div>
+      <button id="paletteClose" class="palette-close">✓ Fermer</button>
+    </aside>
+    <div class="palette-backdrop" id="paletteBackdrop"></div>
+
+    <main class="canvas-area">
+      <div class="canvas-wrap" id="canvasWrap">
+        <canvas id="baseCanvas"></canvas>
+        <canvas id="overlayCanvas"></canvas>
+      </div>
+    </main>
+  </div>
+
+  <div class="hint" id="hint" hidden></div>
+
+  <div class="selection-toolbar" id="selectionToolbar" hidden>
+    <button id="btnRotateMinus" title="Tourner à gauche">↺</button>
+    <button id="btnRotatePlus" title="Tourner à droite">↻</button>
+    <button id="btnShrink" title="Rapetisser">➖</button>
+    <button id="btnGrow" title="Agrandir">➕</button>
+    <button id="btnFront" title="Mettre devant">⬆️</button>
+    <button id="btnBack" title="Mettre derrière">⬇️</button>
+    <button id="btnDeleteItem" class="danger" title="Supprimer">🗑️</button>
+    <button id="btnDeselect" class="primary" title="Terminer">✓</button>
+  </div>
+
+  <button id="paletteToggle" class="palette-toggle">🧰 Objets</button>
+
+  <div class="modal-backdrop" id="textModalBackdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-label="Écrire du texte">
+      <label for="textModalInput">Ton texte</label>
+      <textarea id="textModalInput" maxlength="60" rows="2" placeholder="Trésor caché ici !"></textarea>
+      <div class="modal-actions">
+        <button id="textModalCancel" class="text-btn">Annuler</button>
+        <button id="textModalOk" class="text-btn primary">✓ Valider</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="vendor/jspdf.umd.min.js"></script>
+<script src="manifest.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
