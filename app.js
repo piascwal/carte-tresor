@@ -14,6 +14,9 @@
   const ROTATE_HANDLE_VISUAL_R = CANVAS_W * 0.014;
   const ROTATE_HANDLE_HIT_R = CANVAS_W * 0.05;
 
+  // Grille des tuiles de chemin (auto-tuilage façon route de city-builder).
+  const PATH_CELL = CANVAS_W * 0.05;
+
   // ---------- DOM ----------
   const canvasWrap = document.getElementById('canvasWrap');
   const baseCanvas = document.getElementById('baseCanvas');
@@ -34,6 +37,8 @@
   const paletteClose = document.getElementById('paletteClose');
   const paperThumbs = document.getElementById('paperThumbs');
   const textToolRow = document.getElementById('textToolRow');
+  const pathToolRow = document.getElementById('pathToolRow');
+  const btnRandomMap = document.getElementById('btnRandomMap');
   const categoryTabs = document.getElementById('categoryTabs');
   const itemsGrid = document.getElementById('itemsGrid');
   const hint = document.getElementById('hint');
@@ -119,20 +124,24 @@
     updateSelectionUI();
     redraw();
   }
+  // past[past.length - 1] correspond toujours à l'état courant (chaque action
+  // pousse son propre résultat) : annuler retire ce dernier étage et restaure
+  // celui d'avant, plutôt que de re-restaurer l'état courant sans rien changer.
   function undo() {
-    if (!past.length) return;
-    future.push(snapshot());
-    restore(past.pop());
+    if (past.length < 2) return;
+    future.push(past.pop());
+    restore(past[past.length - 1]);
     updateHistoryButtons();
   }
   function redo() {
     if (!future.length) return;
-    past.push(snapshot());
-    restore(future.pop());
+    const snap = future.pop();
+    past.push(snap);
+    restore(snap);
     updateHistoryButtons();
   }
   function updateHistoryButtons() {
-    btnUndo.disabled = past.length === 0;
+    btnUndo.disabled = past.length < 2;
     btnRedo.disabled = future.length === 0;
   }
 
@@ -149,6 +158,7 @@
     return img;
   }
   PAPERS.forEach((p) => getImage(p.file));
+  CATEGORIES.forEach((cat) => cat.items.forEach((it) => getImage(it.file)));
 
   // ---------- Helpers ----------
   function genId() { return 'it' + (idCounter++); }
@@ -240,8 +250,26 @@
     }
   }
 
+  function drawPathPreview(cells) {
+    if (cells.length < 2) return;
+    overlayCtx.save();
+    overlayCtx.globalAlpha = 0.85;
+    for (const tile of computePathTiles(cells)) {
+      const img = getImage(`assets/tiles/${tile.tileId}.png`);
+      if (!img.complete || !img.naturalWidth) continue;
+      const center = cellCenter(tile.col, tile.row);
+      overlayCtx.save();
+      overlayCtx.translate(center.x, center.y);
+      overlayCtx.rotate((tile.rotationDeg * Math.PI) / 180);
+      overlayCtx.drawImage(img, -PATH_CELL / 2, -PATH_CELL / 2, PATH_CELL, PATH_CELL);
+      overlayCtx.restore();
+    }
+    overlayCtx.restore();
+  }
+
   function drawOverlay() {
     overlayCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+    if (gesture && gesture.type === 'draw-path') drawPathPreview(gesture.cells);
     const it = selectedId && findItem(selectedId);
     if (!it) return;
     const { w, h } = itemBoxSize(it);
@@ -372,6 +400,217 @@
     return { id: genId(), kind: 'image', src: stamp.file, x: p.x, y: p.y, w, h: w * ratio, rotation: 0, z: nextZ() };
   }
 
+  // ---------- Auto-tuilage des chemins ----------
+  // Les tuiles pathStraight/pathCorner/pathEnd/pathSplit/pathCrossing connectent,
+  // à rotation 0, respectivement {N,S} / {N,E} / {N} / {N,S,E} / {N,E,S,W}.
+  // On choisit la tuile + rotation qui reproduisent l'ensemble de connexions voulu.
+  const DIR_ORDER = ['N', 'E', 'S', 'W'];
+  function rotateDirs(dirs, steps) {
+    return dirs.map((d) => DIR_ORDER[(DIR_ORDER.indexOf(d) + steps) % 4]);
+  }
+  function dirSetKey(dirs) { return [...dirs].sort().join(''); }
+  // Bases à rotation 0, une par nombre de connexions (1 à 4).
+  const PATH_TILE_BASES = [
+    null,
+    { base: ['N'], tileId: 'pathEnd' },
+    { base: ['N', 'S'], tileId: 'pathStraight' },
+    { base: ['N', 'S', 'E'], tileId: 'pathSplit' },
+    { base: ['N', 'E', 'S', 'W'], tileId: 'pathCrossing' },
+  ];
+  const PATH_CORNER_BASE = { base: ['N', 'E'], tileId: 'pathCorner' };
+  function dirsToTile(dirs) {
+    if (dirs.length === 0) return null;
+    const key = dirSetKey(dirs);
+    const candidates = dirs.length === 2 ? [PATH_TILE_BASES[2], PATH_CORNER_BASE] : [PATH_TILE_BASES[dirs.length]];
+    for (const { base, tileId } of candidates) {
+      for (let steps = 0; steps < 4; steps++) {
+        if (dirSetKey(rotateDirs(base, steps)) === key) return { tileId, rotationDeg: steps * 90 };
+      }
+    }
+    return null;
+  }
+  function pointToCell(p) {
+    return { col: Math.round(p.x / PATH_CELL), row: Math.round(p.y / PATH_CELL) };
+  }
+  function cellCenter(col, row) {
+    return { x: col * PATH_CELL, y: row * PATH_CELL };
+  }
+  // Ajoute à `cells` une marche orthogonale (sans diagonale) du dernier point jusqu'à `cell`,
+  // pour que deux cases consécutives soient toujours voisines (utile même si le doigt saute des cases).
+  function walkCellsTo(cells, cell) {
+    let { col, row } = cells[cells.length - 1];
+    while (col !== cell.col || row !== cell.row) {
+      if (col !== cell.col) col += Math.sign(cell.col - col);
+      else row += Math.sign(cell.row - row);
+      cells.push({ col, row });
+    }
+  }
+  // Déduit, pour chaque case unique de `cells`, la tuile+rotation à partir de ses voisins
+  // qui appartiennent eux aussi au tracé (les connexions ne dépendent que de la grille, pas de l'ordre).
+  function computePathTiles(cells) {
+    const set = new Set(cells.map((c) => `${c.col},${c.row}`));
+    const seen = new Set();
+    const tiles = [];
+    for (const c of cells) {
+      const key = `${c.col},${c.row}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const dirs = [];
+      if (set.has(`${c.col},${c.row - 1}`)) dirs.push('N');
+      if (set.has(`${c.col + 1},${c.row}`)) dirs.push('E');
+      if (set.has(`${c.col},${c.row + 1}`)) dirs.push('S');
+      if (set.has(`${c.col - 1},${c.row}`)) dirs.push('W');
+      const mapped = dirsToTile(dirs);
+      if (!mapped) continue;
+      tiles.push({ col: c.col, row: c.row, tileId: mapped.tileId, rotationDeg: mapped.rotationDeg });
+    }
+    return tiles;
+  }
+  function createPathTileItem(tile) {
+    const center = cellCenter(tile.col, tile.row);
+    return {
+      id: genId(), kind: 'image', src: `assets/tiles/${tile.tileId}.png`,
+      x: center.x, y: center.y, w: PATH_CELL, h: PATH_CELL,
+      rotation: (tile.rotationDeg * Math.PI) / 180, z: nextZ(),
+    };
+  }
+
+  // ---------- Génération aléatoire de carte ----------
+  // Groupes d'objets qui vont naturellement ensemble, pour des « grappes » cohérentes.
+  const CLUSTER_THEMES = [
+    { tiles: ['treePine', 'treePineLarge', 'treePineTall', 'treePineTallLarge', 'treePineTallLow', 'treePines', 'treePinesSmall', 'treeTall', 'bush'], count: [4, 8] },
+    { tiles: ['rocksA', 'rocksB', 'rocksTall', 'rocksMountain'], count: [3, 6] },
+    { tiles: ['cactus', 'cactusLarge', 'palm', 'palmLarge'], count: [3, 6] },
+    { tiles: ['house', 'houseSmall', 'houseChimney', 'houseTall', 'well', 'fence'], count: [3, 6] },
+    { tiles: ['runis', 'graveyard', 'skull'], count: [2, 4] },
+    { tiles: ['tent', 'tipi', 'campfire'], count: [2, 4] },
+  ];
+
+  function randInt(min, max) { return Math.floor(min + Math.random() * (max - min + 1)); }
+  function randRange(min, max) { return min + Math.random() * (max - min); }
+  function pick(arr) { return arr[randInt(0, arr.length - 1)]; }
+
+  function pathGridBounds() {
+    const margin = 1;
+    return {
+      colMin: margin, colMax: Math.floor(CANVAS_W / PATH_CELL) - margin,
+      rowMin: margin, rowMax: Math.floor(CANVAS_H / PATH_CELL) - margin,
+    };
+  }
+
+  // Marche orthogonale du bord de départ vers le bord d'arrivée : surtout vers la cible,
+  // avec quelques écarts aléatoires (sans jamais faire immédiatement demi-tour) pour que
+  // le chemin serpente au lieu d'être une diagonale parfaite.
+  function generateRandomPathCells() {
+    const b = pathGridBounds();
+    const edges = ['top', 'bottom', 'left', 'right'];
+    const startEdge = pick(edges);
+    let endEdge = pick(edges);
+    while (endEdge === startEdge) endEdge = pick(edges);
+    function pointOnEdge(e) {
+      if (e === 'top') return { col: randInt(b.colMin, b.colMax), row: b.rowMin };
+      if (e === 'bottom') return { col: randInt(b.colMin, b.colMax), row: b.rowMax };
+      if (e === 'left') return { col: b.colMin, row: randInt(b.rowMin, b.rowMax) };
+      return { col: b.colMax, row: randInt(b.rowMin, b.rowMax) };
+    }
+    const start = pointOnEdge(startEdge);
+    const end = pointOnEdge(endEdge);
+
+    const cells = [start];
+    let { col, row } = start;
+    let prevDelta = null;
+    let guard = 0;
+    while ((col !== end.col || row !== end.row) && guard++ < 600) {
+      const dCol = end.col - col, dRow = end.row - row;
+      let delta;
+      if (Math.random() < 0.72) {
+        if (Math.abs(dCol) > Math.abs(dRow) && dCol !== 0) delta = { dc: Math.sign(dCol), dr: 0 };
+        else if (dRow !== 0) delta = { dc: 0, dr: Math.sign(dRow) };
+        else delta = { dc: Math.sign(dCol), dr: 0 };
+      } else {
+        const options = [{ dc: 1, dr: 0 }, { dc: -1, dr: 0 }, { dc: 0, dr: 1 }, { dc: 0, dr: -1 }]
+          .filter((o) => !prevDelta || !(o.dc === -prevDelta.dc && o.dr === -prevDelta.dr));
+        delta = pick(options);
+      }
+      const nc = clamp(col + delta.dc, b.colMin, b.colMax);
+      const nr = clamp(row + delta.dr, b.rowMin, b.rowMax);
+      if (nc === col && nr === row) continue;
+      col = nc; row = nr;
+      cells.push({ col, row });
+      prevDelta = delta;
+    }
+    if (col !== end.col || row !== end.row) walkCellsTo(cells, end);
+    return cells;
+  }
+
+  function distToPathCells(pathCells, x, y) {
+    let min = Infinity;
+    for (const c of pathCells) {
+      const d = Math.hypot(x - c.col * PATH_CELL, y - c.row * PATH_CELL);
+      if (d < min) min = d;
+    }
+    return min;
+  }
+
+  function pickClusterCenters(pathCells, count) {
+    const centers = [];
+    const margin = CANVAS_W * 0.08;
+    let attempts = 0;
+    while (centers.length < count && attempts < count * 30) {
+      attempts++;
+      const x = randRange(margin, CANVAS_W - margin);
+      const y = randRange(margin, CANVAS_H - margin);
+      if (distToPathCells(pathCells, x, y) < PATH_CELL * 1.6) continue;
+      if (centers.some((c) => Math.hypot(c.x - x, c.y - y) < CANVAS_W * 0.14)) continue;
+      centers.push({ x, y });
+    }
+    return centers;
+  }
+
+  function pushRandomImageItem(tileId, x, y, w, rotation) {
+    const img = getImage(`assets/tiles/${tileId}.png`);
+    const ratio = img.naturalWidth ? img.naturalHeight / img.naturalWidth : 1;
+    state.items.push({
+      id: genId(), kind: 'image', src: `assets/tiles/${tileId}.png`,
+      x, y, w, h: w * ratio, rotation, z: nextZ(),
+    });
+  }
+
+  function generateRandomMap() {
+    if (state.items.length && !window.confirm('Remplacer le contenu actuel par une carte générée aléatoirement ?')) return;
+
+    state.items = [];
+    armedStamp = null;
+    updatePaletteArmedUI();
+
+    const pathCells = generateRandomPathCells();
+    for (const tile of computePathTiles(pathCells)) state.items.push(createPathTileItem(tile));
+
+    const centers = pickClusterCenters(pathCells, randInt(4, 7));
+    for (const center of centers) {
+      const theme = pick(CLUSTER_THEMES);
+      const n = randInt(theme.count[0], theme.count[1]);
+      for (let i = 0; i < n; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const radius = Math.sqrt(Math.random()) * CANVAS_W * 0.09; // plus dense près du centre
+        const x = clamp(center.x + Math.cos(angle) * radius, PATH_CELL, CANVAS_W - PATH_CELL);
+        const y = clamp(center.y + Math.sin(angle) * radius, PATH_CELL, CANVAS_H - PATH_CELL);
+        pushRandomImageItem(pick(theme.tiles), x, y, CANVAS_W * randRange(0.09, 0.13), randRange(-0.2, 0.2));
+      }
+    }
+
+    // Repères : un fanion au départ, le coffre au trésor à l'arrivée.
+    const start = cellCenter(pathCells[0].col, pathCells[0].row);
+    const end = cellCenter(pathCells[pathCells.length - 1].col, pathCells[pathCells.length - 1].row);
+    pushRandomImageItem('flag', start.x, start.y, CANVAS_W * 0.06, 0);
+    pushRandomImageItem('chest', end.x, end.y, CANVAS_W * 0.08, 0);
+
+    lastImageW = null;
+    deselect();
+    pushHistory();
+  }
+  btnRandomMap.addEventListener('click', generateRandomMap);
+
   // ---------- Text modal (replaces window.prompt, which some embedded/PWA contexts block) ----------
   let textModalResolve = null;
   function askText(defaultValue) {
@@ -489,13 +728,16 @@
     if (armedStamp) {
       if (armedStamp.kind === 'text') {
         placeTextAt(p);
+        gesture = null;
+      } else if (armedStamp.kind === 'path') {
+        gesture = { type: 'draw-path', pointerId: e.pointerId, cells: [pointToCell(p)] };
       } else {
         const item = createImageItem(armedStamp, p);
         state.items.push(item);
         selectItem(item.id);
         pushHistory();
+        gesture = null;
       }
-      gesture = null;
       return;
     }
 
@@ -631,6 +873,11 @@
       clampPan();
       applyView();
 
+    } else if (gesture.type === 'draw-path' && gesture.pointerId === e.pointerId) {
+      const p = toCanvasPoint(e);
+      walkCellsTo(gesture.cells, pointToCell(p));
+      redraw();
+
     } else if (gesture.type === 'pan-view' && gesture.pointerId === e.pointerId) {
       const dx = e.clientX - gesture.startClientX;
       const dy = e.clientY - gesture.startClientY;
@@ -651,6 +898,12 @@
       if (g.moved) pushHistory();
     } else if (g.type === 'pan-view' && !g.moved) {
       deselect();
+    } else if (g.type === 'draw-path' && g.cells.length > 1) {
+      for (const tile of computePathTiles(g.cells)) {
+        state.items.push(createPathTileItem(tile));
+      }
+      deselect();
+      pushHistory();
     }
   }
 
@@ -659,8 +912,9 @@
     pointers.delete(e.pointerId);
     clearLongPress();
     if (gesture && (gesture.pointerId === e.pointerId || (gesture.ids && gesture.ids.includes(e.pointerId)))) {
-      finishGesture(gesture);
-      gesture = null;
+      const g = gesture;
+      gesture = null; // avant finishGesture, pour que le redraw final n'affiche plus l'aperçu
+      finishGesture(g);
     }
   }
   canvasWrap.addEventListener('pointerup', endPointer);
@@ -694,6 +948,15 @@
     textToolRow.appendChild(btn);
   }
 
+  function renderPathTool() {
+    pathToolRow.innerHTML = '';
+    const btn = document.createElement('button');
+    btn.className = 'item-btn text-tool';
+    btn.innerHTML = '<span style="font-size:1.4rem">🧭</span><span>Tracer un chemin au doigt</span>';
+    btn.addEventListener('click', () => armStamp({ kind: 'path' }, btn));
+    pathToolRow.appendChild(btn);
+  }
+
   let activeTabId = CATEGORIES[0].id;
   function renderTabs() {
     categoryTabs.innerHTML = '';
@@ -722,12 +985,16 @@
     armedBtnEl = btnEl;
     deselect();
     updatePaletteArmedUI();
-    showHint(stamp.kind === 'text' ? '✏️ Touche la carte pour écrire' : '👉 Touche la carte pour placer l\'objet');
+    showHint(
+      stamp.kind === 'text' ? '✏️ Touche la carte pour écrire'
+        : stamp.kind === 'path' ? '🧭 Glisse le doigt sur la carte pour tracer un chemin'
+        : '👉 Touche la carte pour placer l\'objet'
+    );
     closePaletteOnMobile();
   }
   function sameStamp(a, b) {
     if (a.kind !== b.kind) return false;
-    return a.kind === 'text' ? true : a.file === b.file;
+    return a.kind === 'image' ? a.file === b.file : true;
   }
   function updatePaletteArmedUI() {
     document.querySelectorAll('.item-btn').forEach((el) => el.classList.remove('armed'));
@@ -850,6 +1117,7 @@
   function init() {
     renderPaperThumbs();
     renderTextTool();
+    renderPathTool();
     renderTabs();
     renderItemsGrid();
     updateSelectionUI();

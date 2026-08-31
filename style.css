@@ -201,6 +201,9 @@ button {
   margin-bottom: 6px;
 }
 
+.random-gen { margin-bottom: 14px; }
+.random-gen-btn { width: 100%; padding: 12px; font-size: 1rem; }
+
 .paper-picker { margin-bottom: 14px; }
 
 .paper-thumbs {
