@@ -183,6 +183,12 @@
   function toCanvasPoint(e) {
     return toCanvasPointFromClient(e.clientX, e.clientY);
   }
+  // Convertit une distance en pixels écran réels vers des unités canvas, pour des seuils
+  // de tolérance tactile qui restent cohérents quel que soit le zoom ou la taille d'écran.
+  function pxToCanvasUnits(px) {
+    const rect = canvasWrap.getBoundingClientRect();
+    return rect.width > 0 ? px * (CANVAS_W / rect.width) : px;
+  }
 
   function itemBoxSize(it) {
     if (it.kind === 'text') {
@@ -308,13 +314,21 @@
   }
 
   // ---------- Selection / toolbar ----------
+  // lastSelectTime sert à repérer une sélection "fraîche" et probablement accidentelle
+  // (le premier doigt d'un pincement mal synchronisé qui atterrit sur un objet). Une
+  // sélection issue d'une action délibérée (poser un objet, le dupliquer) est en revanche
+  // marquée comme telle d'emblée via markSelectionDeliberate, pour qu'un pincement immédiat
+  // dessus reste bien interprété comme un redimensionnement voulu.
+  let lastSelectTime = 0;
   function selectItem(id) {
+    if (id !== selectedId) lastSelectTime = Date.now();
     selectedId = id;
     armedStamp = null;
     updatePaletteArmedUI();
     updateSelectionUI();
     redraw();
   }
+  function markSelectionDeliberate() { lastSelectTime = 0; }
   function deselect() {
     selectedId = null;
     updateSelectionUI();
@@ -344,6 +358,7 @@
     else lastTextFontSize = copy.fontSize;
     state.items.push(copy);
     selectItem(copy.id);
+    markSelectionDeliberate();
     pushHistory();
   }
   function bringFront() {
@@ -646,6 +661,7 @@
     };
     state.items.push(item);
     selectItem(item.id);
+    markSelectionDeliberate();
     pushHistory();
   }
 
@@ -735,6 +751,7 @@
         const item = createImageItem(armedStamp, p);
         state.items.push(item);
         selectItem(item.id);
+        markSelectionDeliberate();
         pushHistory();
         gesture = null;
       }
@@ -749,12 +766,23 @@
     };
   }
 
+  // Deux doigts posés parfaitement en même temps n'existent pas : l'un touche toujours
+  // la carte une fraction de seconde avant l'autre. S'il atterrit sur un objet, celui-ci
+  // se sélectionne, et le pincement serait alors interprété à tort comme un redimensionnement
+  // de cet objet plutôt qu'un zoom de la carte. On ignore donc une sélection trop récente,
+  // en la traitant comme accidentelle plutôt que comme un choix délibéré de l'utilisateur.
+  const PINCH_ACCIDENTAL_SELECT_MS = 350;
+
   function startTwoPointerGesture() {
+    clearLongPress();
     const ids = [...pointers.keys()];
     const a = pointers.get(ids[0]);
     const b = pointers.get(ids[1]);
 
-    if (selectedId) {
+    const selectionIsDeliberate = selectedId && (Date.now() - lastSelectTime) > PINCH_ACCIDENTAL_SELECT_MS;
+    if (selectedId && !selectionIsDeliberate) deselect();
+
+    if (selectionIsDeliberate) {
       const it = findItem(selectedId);
       if (it) {
         const ca = toCanvasPointFromClient(a.x, a.y);
@@ -823,7 +851,10 @@
       const dy = p.y - gesture.startPx.y;
       it.x = clamp(gesture.startCx + dx, 0, CANVAS_W);
       it.y = clamp(gesture.startCy + dy, 0, CANVAS_H);
-      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) gesture.moved = true;
+      // Seuil en pixels écran réels (pas en unités canvas) : un doigt qui tremble
+      // légèrement pendant un appui long ne doit pas annuler le menu contextuel.
+      const moveThreshold = pxToCanvasUnits(10);
+      if (Math.abs(dx) > moveThreshold || Math.abs(dy) > moveThreshold) gesture.moved = true;
       redraw();
 
     } else if (gesture.type === 'rotate-item' && gesture.pointerId === e.pointerId) {
