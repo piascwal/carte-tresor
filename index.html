@@ -21,8 +21,8 @@
       <button id="btnUndo" class="icon-btn" title="Annuler" aria-label="Annuler">↩️</button>
       <button id="btnRedo" class="icon-btn" title="Rétablir" aria-label="Rétablir">↪️</button>
       <button id="btnClear" class="icon-btn" title="Tout effacer" aria-label="Tout effacer">🗑️</button>
-      <button id="btnPng" class="text-btn" title="Télécharger en image">🖼️ Image</button>
-      <button id="btnPdf" class="text-btn primary" title="Exporter en PDF">📄 Exporter en PDF</button>
+      <button id="btnPng" class="text-btn" title="Télécharger en image">🖼️<span class="btn-label"> Image</span></button>
+      <button id="btnPdf" class="text-btn primary" title="Exporter en PDF">📄<span class="btn-label"> Exporter en PDF</span></button>
     </div>
   </header>
 
@@ -65,6 +65,7 @@
   </div>
 
   <button id="paletteToggle" class="palette-toggle">🧰 Objets</button>
+  <button id="btnResetView" class="view-reset-btn" hidden title="Réinitialiser le zoom" aria-label="Réinitialiser le zoom">🔍 100%</button>
 
   <div class="modal-backdrop" id="textModalBackdrop" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-label="Écrire du texte">
