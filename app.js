@@ -211,6 +211,17 @@
 
   function findItem(id) { return state.items.find((i) => i.id === id); }
 
+  // L'objet le plus « devant » (z le plus haut) qui contient p, dans l'ordre visuel réel —
+  // pas dans l'ordre d'insertion dans le tableau, qui ne bouge pas quand on avance/recule
+  // un objet via "Mettre devant"/"Mettre derrière".
+  function topmostHitItem(p) {
+    let best = null;
+    for (const it of state.items) {
+      if (hitTest(it, p) && (!best || it.z > best.z)) best = it;
+    }
+    return best;
+  }
+
   function rotateHandlePos(it) {
     const { h } = itemBoxSize(it);
     const localY = -(h / 2 + 14 + ROTATE_HANDLE_GAP);
@@ -316,9 +327,9 @@
   // ---------- Selection / toolbar ----------
   // lastSelectTime sert à repérer une sélection "fraîche" et probablement accidentelle
   // (le premier doigt d'un pincement mal synchronisé qui atterrit sur un objet). Une
-  // sélection issue d'une action délibérée (poser un objet, le dupliquer) est en revanche
-  // marquée comme telle d'emblée via markSelectionDeliberate, pour qu'un pincement immédiat
-  // dessus reste bien interprété comme un redimensionnement voulu.
+  // sélection issue d'une action délibérée (dupliquer un objet) est en revanche marquée
+  // comme telle d'emblée via markSelectionDeliberate, pour qu'un pincement immédiat dessus
+  // reste bien interprété comme un redimensionnement voulu.
   let lastSelectTime = 0;
   function selectItem(id) {
     if (id !== selectedId) lastSelectTime = Date.now();
@@ -660,9 +671,8 @@
       fontSize, rotation: 0, color: '#3b2a1a', z: nextZ(),
     };
     state.items.push(item);
-    selectItem(item.id);
-    markSelectionDeliberate();
     pushHistory();
+    redraw();
   }
 
   async function editTextItem(it) {
@@ -730,10 +740,7 @@
       }
     }
 
-    let hit = null;
-    for (let i = state.items.length - 1; i >= 0; i--) {
-      if (hitTest(state.items[i], p)) { hit = state.items[i]; break; }
-    }
+    const hit = topmostHitItem(p);
     if (hit) {
       selectItem(hit.id);
       gesture = { type: 'drag-item', pointerId: e.pointerId, id: hit.id, startPx: p, startCx: hit.x, startCy: hit.y, moved: false };
@@ -748,11 +755,12 @@
       } else if (armedStamp.kind === 'path') {
         gesture = { type: 'draw-path', pointerId: e.pointerId, cells: [pointToCell(p)] };
       } else {
+        // Poser un objet le valide directement : pas de sélection ni de menu d'édition,
+        // et l'outil reste actif pour enchaîner d'autres poses du même objet.
         const item = createImageItem(armedStamp, p);
         state.items.push(item);
-        selectItem(item.id);
-        markSelectionDeliberate();
         pushHistory();
+        redraw();
         gesture = null;
       }
       return;
@@ -830,12 +838,8 @@
 
   canvasWrap.addEventListener('dblclick', (e) => {
     const p = toCanvasPoint(e);
-    for (let i = state.items.length - 1; i >= 0; i--) {
-      if (state.items[i].kind === 'text' && hitTest(state.items[i], p)) {
-        editTextItem(state.items[i]);
-        break;
-      }
-    }
+    const hit = topmostHitItem(p);
+    if (hit && hit.kind === 'text') editTextItem(hit);
   });
 
   canvasWrap.addEventListener('pointermove', (e) => {
@@ -1017,9 +1021,9 @@
     deselect();
     updatePaletteArmedUI();
     showHint(
-      stamp.kind === 'text' ? '✏️ Touche la carte pour écrire'
+      stamp.kind === 'text' ? '✏️ Touche la carte pour écrire (plusieurs fois possible)'
         : stamp.kind === 'path' ? '🧭 Glisse le doigt sur la carte pour tracer un chemin'
-        : '👉 Touche la carte pour placer l\'objet'
+        : '👉 Touche la carte pour poser l\'objet (plusieurs fois possible)'
     );
     closePaletteOnMobile();
   }
