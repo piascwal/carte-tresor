@@ -55,6 +55,10 @@
 
   const btnResetView = document.getElementById('btnResetView');
 
+  const contextMenu = document.getElementById('contextMenu');
+  const ctxDuplicate = document.getElementById('ctxDuplicate');
+  const ctxDelete = document.getElementById('ctxDelete');
+
   baseCanvas.width = CANVAS_W;
   baseCanvas.height = CANVAS_H;
   overlayCanvas.width = CANVAS_W;
@@ -300,6 +304,20 @@
     pushHistory();
     redraw();
   }
+  function duplicateSelected() {
+    const it = findItem(selectedId);
+    if (!it) return;
+    const copy = JSON.parse(JSON.stringify(it));
+    copy.id = genId();
+    copy.x = clamp(it.x + CANVAS_W * 0.03, 0, CANVAS_W);
+    copy.y = clamp(it.y + CANVAS_W * 0.03, 0, CANVAS_H);
+    copy.z = nextZ();
+    if (copy.kind === 'image') lastImageW = copy.w;
+    else lastTextFontSize = copy.fontSize;
+    state.items.push(copy);
+    selectItem(copy.id);
+    pushHistory();
+  }
   function bringFront() {
     const it = findItem(selectedId);
     if (!it) return;
@@ -320,11 +338,13 @@
     if (!it) return;
     if (it.kind === 'text') {
       it.fontSize = clamp(it.fontSize * factor, CANVAS_W * 0.015, CANVAS_W * 0.14);
+      lastTextFontSize = it.fontSize;
     } else {
       const nw = clamp(it.w * factor, CANVAS_W * 0.03, CANVAS_W * 0.9);
       const ratio = it.h / it.w;
       it.w = nw;
       it.h = nw * ratio;
+      lastImageW = it.w;
     }
     pushHistory();
     redraw();
@@ -339,10 +359,16 @@
   function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 
   // ---------- Stamp placement ----------
+  // Un nouvel objet reprend par défaut la taille du précédent objet posé,
+  // pour éviter de repartir d'une taille minuscule à chaque fois.
+  let lastImageW = null;
+  let lastTextFontSize = null;
+
   function createImageItem(stamp, p) {
     const img = getImage(stamp.file);
     const ratio = img.naturalWidth ? img.naturalHeight / img.naturalWidth : 1;
-    const w = CANVAS_W * 0.14;
+    const w = clamp(lastImageW != null ? lastImageW : CANVAS_W * 0.14, CANVAS_W * 0.03, CANVAS_W * 0.9);
+    lastImageW = w;
     return { id: genId(), kind: 'image', src: stamp.file, x: p.x, y: p.y, w, h: w * ratio, rotation: 0, z: nextZ() };
   }
 
@@ -373,9 +399,11 @@
   async function placeTextAt(p) {
     const text = await askText('Trésor caché ici !');
     if (!text) return;
+    const fontSize = clamp(lastTextFontSize != null ? lastTextFontSize : CANVAS_W * 0.04, CANVAS_W * 0.015, CANVAS_W * 0.14);
+    lastTextFontSize = fontSize;
     const item = {
       id: genId(), kind: 'text', text, x: p.x, y: p.y,
-      fontSize: CANVAS_W * 0.04, rotation: 0, color: '#3b2a1a', z: nextZ(),
+      fontSize, rotation: 0, color: '#3b2a1a', z: nextZ(),
     };
     state.items.push(item);
     selectItem(item.id);
@@ -390,12 +418,49 @@
     redraw();
   }
 
+  // ---------- Menu contextuel (appui long sur un objet posé) ----------
+  const LONG_PRESS_MS = 500;
+  let longPressTimer = null;
+
+  function clearLongPress() {
+    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+  }
+  function startLongPress(id, clientX, clientY) {
+    clearLongPress();
+    longPressTimer = setTimeout(() => {
+      longPressTimer = null;
+      if (gesture && gesture.type === 'drag-item' && gesture.id === id && !gesture.moved) {
+        gesture = null;
+        openContextMenu(clientX, clientY);
+      }
+    }, LONG_PRESS_MS);
+  }
+  function openContextMenu(clientX, clientY) {
+    contextMenu.hidden = false;
+    const margin = 8;
+    const mw = contextMenu.offsetWidth;
+    const mh = contextMenu.offsetHeight;
+    const left = clamp(clientX - mw / 2, margin, window.innerWidth - mw - margin);
+    const top = clamp(clientY - mh - 16, margin, window.innerHeight - mh - margin);
+    contextMenu.style.left = left + 'px';
+    contextMenu.style.top = top + 'px';
+  }
+  function closeContextMenu() {
+    contextMenu.hidden = true;
+  }
+  ctxDuplicate.addEventListener('click', () => { duplicateSelected(); closeContextMenu(); });
+  ctxDelete.addEventListener('click', () => { deleteSelected(); closeContextMenu(); });
+  document.addEventListener('pointerdown', (e) => {
+    if (!contextMenu.hidden && !contextMenu.contains(e.target)) closeContextMenu();
+  });
+
   // ---------- Pointer interaction on canvas (souris + doigts) ----------
   // pointers : suit chaque doigt/pointeur actif, en coordonnées écran (clientX/Y).
   const pointers = new Map();
   let gesture = null;
 
   function startSinglePointerGesture(e) {
+    clearLongPress();
     const p = toCanvasPoint(e);
 
     if (selectedId) {
@@ -417,6 +482,7 @@
     if (hit) {
       selectItem(hit.id);
       gesture = { type: 'drag-item', pointerId: e.pointerId, id: hit.id, startPx: p, startCx: hit.x, startCy: hit.y, moved: false };
+      startLongPress(hit.id, e.clientX, e.clientY);
       return;
     }
 
@@ -540,11 +606,13 @@
       it.rotation = gesture.startRotation + (angle - gesture.startAngle);
       if (gesture.isText) {
         it.fontSize = clamp(gesture.startFontSize * factor, CANVAS_W * 0.015, CANVAS_W * 0.14);
+        lastTextFontSize = it.fontSize;
       } else {
         const nw = clamp(gesture.startW * factor, CANVAS_W * 0.03, CANVAS_W * 0.9);
         const ratio = gesture.startH / gesture.startW;
         it.w = nw;
         it.h = nw * ratio;
+        lastImageW = it.w;
       }
       gesture.moved = true;
       redraw();
@@ -589,6 +657,7 @@
   function endPointer(e) {
     if (!pointers.has(e.pointerId)) return;
     pointers.delete(e.pointerId);
+    clearLongPress();
     if (gesture && (gesture.pointerId === e.pointerId || (gesture.ids && gesture.ids.includes(e.pointerId)))) {
       finishGesture(gesture);
       gesture = null;
@@ -728,6 +797,7 @@
     if (e.key === 'Delete' || e.key === 'Backspace') {
       if (selectedId && document.activeElement !== titleInput) { e.preventDefault(); deleteSelected(); }
     } else if (e.key === 'Escape') {
+      closeContextMenu();
       deselect();
       armedStamp = null;
       updatePaletteArmedUI();

@@ -326,6 +326,35 @@ button {
 }
 .view-reset-btn[hidden] { display: none; }
 
+/* ---------- Menu contextuel (appui long sur un objet) ---------- */
+.context-menu {
+  position: fixed;
+  z-index: 70;
+  background: #2b1d12;
+  border: 2px solid var(--gold);
+  border-radius: 12px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.5);
+}
+.context-menu[hidden] { display: none; }
+.context-menu button {
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: #4a3420;
+  color: #f3e3c6;
+  font-weight: 700;
+  font-size: .95rem;
+  white-space: nowrap;
+  text-align: left;
+}
+.context-menu button:hover { background: #5c4128; }
+.context-menu button:active { transform: scale(0.97); }
+.context-menu button.danger { background: var(--danger); color: white; }
+.context-menu button.danger:hover { background: #8f2c22; }
+
 /* ---------- Hint banner ---------- */
 .hint {
   position: fixed;

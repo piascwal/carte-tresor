@@ -67,6 +67,11 @@
   <button id="paletteToggle" class="palette-toggle">🧰 Objets</button>
   <button id="btnResetView" class="view-reset-btn" hidden title="Réinitialiser le zoom" aria-label="Réinitialiser le zoom">🔍 100%</button>
 
+  <div class="context-menu" id="contextMenu" hidden role="menu">
+    <button id="ctxDuplicate" role="menuitem">📋 Dupliquer</button>
+    <button id="ctxDelete" class="danger" role="menuitem">🗑️ Supprimer</button>
+  </div>
+
   <div class="modal-backdrop" id="textModalBackdrop" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-label="Écrire du texte">
       <label for="textModalInput">Ton texte</label>
